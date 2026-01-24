@@ -372,43 +372,7 @@ Private Function ComponentFilePath(ByVal root As String, ByVal vbComp As VBIDE.V
     End Select
 End Function
 
-Private Function ParseFileName(ByVal fileName As String, _
-                               ByRef kind As ComponentKind, _
-                               ByRef targetName As String) As Boolean
-    Dim base As String: base = fileName
-    Dim p As Long: p = InStrRev(base, ".")
-    Dim stem As String
-    Dim ext As String
 
-    If p > 0 Then
-        stem = Left$(base, p - 1)
-        ext = Mid$(base, p + 1)
-    Else
-        stem = base
-        ext = vbNullString
-    End If
-    
-    If Left$(stem, 7) = "Module_" Then
-        kind = ckStdModule: targetName = Mid$(stem, 8)
-    ElseIf Left$(stem, 6) = "Class_" Then
-        kind = ckClassModule: targetName = Mid$(stem, 7)
-    ElseIf Left$(stem, 5) = "Form_" Then
-        kind = ckForm: targetName = Mid$(stem, 6)
-    ElseIf Left$(stem, 9) = "Document_" Then
-        kind = ckDocument: targetName = Mid$(stem, 10)
-    Else
-        ParseFileName = False: Exit Function
-    End If
-    
-    ' warn if unexpected extension (informational only)
-    Select Case kind
-    Case ckStdModule: If LCase$(ext) <> "bas" Then LogW "Unexpected extension for StdModule: " & fileName
-    Case ckClassModule, ckDocument: If LCase$(ext) <> "cls" Then LogW "Unexpected extension for Class/Document: " & fileName
-    Case ckForm: If LCase$(ext) <> "frm" Then LogW "Unexpected extension for Form: " & fileName
-    End Select
-    
-    ParseFileName = True
-End Function
 
 ' ====== NORMALIZATION (Document code) ======
 ' Strips VERSION/Attribute lines that cannot be injected into document modules
@@ -462,6 +426,18 @@ Public Sub ExportCode(control As IRibbonControl)
     If Len(root) = 0 Then
         MsgBox "Unable to resolve project folder.", vbCritical: Exit Sub
     End If
+    
+    ' Clean up existing folder before export to remove stale files
+    On Error Resume Next
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If fso.FolderExists(root) Then
+        fso.DeleteFolder root, True
+        LogI "Deleted existing project folder: " & root
+    End If
+    Set fso = Nothing
+    On Error GoTo EH
+
     EnsureAllSubfolders root
     
     LogI "Export ? " & ActiveWorkbook.FullName & " ? " & root
@@ -512,13 +488,16 @@ Public Sub ImportCode(control As IRibbonControl)
     LogI "Import ? " & ActiveWorkbook.FullName & " ? " & root
     
     ' Import Std Modules
-    ImportFromFolder ActiveWorkbook, CombinePath(root, "Modules"), "*.bas"
+    ImportFromFolder ActiveWorkbook, CombinePath(root, "Modules"), "*.bas", ckStdModule
     ' Import Classes
-    ImportFromFolder ActiveWorkbook, CombinePath(root, "Classes"), "*.cls"
+    ImportFromFolder ActiveWorkbook, CombinePath(root, "Classes"), "*.cls", ckClassModule
     ' Import Forms
-    ImportFromFolder ActiveWorkbook, CombinePath(root, "Forms"), "*.frm"
+    ImportFromFolder ActiveWorkbook, CombinePath(root, "Forms"), "*.frm", ckForm
     ' Import Documents (ThisWorkbook / Worksheets)
-    ImportFromFolder ActiveWorkbook, CombinePath(root, "Documents"), "*.cls"
+    ImportFromFolder ActiveWorkbook, CombinePath(root, "Documents"), "*.cls", ckDocument
+    
+    ' Check for extras
+    CheckAndRemoveExtras ActiveWorkbook, root
     
     MsgBox "VBA Import complete", vbInformation
     'MsgBox "Import complete from: " & root, vbInformation
@@ -530,7 +509,7 @@ End Sub
 
 ' ===================== INTERNAL IMPORT HELPERS =====================
 
-Private Sub ImportFromFolder(ByVal wb As Workbook, ByVal folder As String, ByVal pattern As String)
+Private Sub ImportFromFolder(ByVal wb As Workbook, ByVal folder As String, ByVal pattern As String, ByVal compKind As ComponentKind)
     On Error GoTo EH
     If Dir(folder, vbDirectory) = vbNullString Then
         LogW "Missing folder, skipping: " & folder
@@ -541,15 +520,11 @@ Private Sub ImportFromFolder(ByVal wb As Workbook, ByVal folder As String, ByVal
     f = Dir(CombinePath(folder, pattern), vbNormal)
     Do While Len(f) > 0
         Dim path As String: path = CombinePath(folder, f)
-        Dim kind As ComponentKind
         Dim target As String
-
-        If Not ParseFileName(f, kind, target) Then
-            LogW "Skipping unrecognized file: " & path
-            GoTo NextFile
-        End If
         
-        Select Case kind
+        target = CleanNameWithoutExt(f)
+        
+        Select Case compKind
         Case ckStdModule
             ImportStdOrClass wb, path, target, vbext_ct_StdModule
         Case ckClassModule
@@ -560,7 +535,6 @@ Private Sub ImportFromFolder(ByVal wb As Workbook, ByVal folder As String, ByVal
             ImportDocumentCode wb, path, target
         End Select
         
-NextFile:
         f = Dir
         DoEvents
     Loop
@@ -586,7 +560,20 @@ Private Sub ImportStdOrClass(ByVal wb As Workbook, ByVal filePath As String, _
         LogI "Removed existing component: " & compName
     End If
     
-    vbProj.VBComponents.Import filePath
+    Dim newComp As VBIDE.VBComponent
+    Set newComp = vbProj.VBComponents.Import(filePath)
+    
+    If newComp.Name <> compName Then
+        LogI "Renaming imported component " & newComp.Name & " to " & compName
+        On Error Resume Next
+        newComp.Name = compName
+        If Err.Number <> 0 Then
+            LogE "Failed to rename component " & newComp.Name & " to " & compName & ": " & Err.Description
+            Err.Clear
+        End If
+        On Error GoTo EH
+    End If
+    
     LogI "Imported " & compName & " from " & filePath
     Exit Sub
 EH:
@@ -608,7 +595,20 @@ Private Sub ImportForm(ByVal wb As Workbook, ByVal filePath As String, ByVal for
         LogI "Removed existing form: " & formName
     End If
     
-    vbProj.VBComponents.Import filePath
+    Dim newComp As VBIDE.VBComponent
+    Set newComp = vbProj.VBComponents.Import(filePath)
+    
+    If newComp.Name <> formName Then
+        LogI "Renaming imported form " & newComp.Name & " to " & formName
+        On Error Resume Next
+        newComp.Name = formName
+         If Err.Number <> 0 Then
+            LogE "Failed to rename form " & newComp.Name & " to " & formName & ": " & Err.Description
+            Err.Clear
+        End If
+        On Error GoTo EH
+    End If
+    
     LogI "Imported form " & formName
     Exit Sub
 EH:
@@ -641,6 +641,94 @@ Private Sub ImportDocumentCode(ByVal wb As Workbook, ByVal filePath As String, B
     Exit Sub
 EH:
     LogE "Import document failed (" & docCodeName & "): " & Err.Description
+End Sub
+
+' ===================== EXTRA COMPONENT CHECK =====================
+
+Private Sub CheckAndRemoveExtras(ByVal wb As Workbook, ByVal root As String)
+    On Error GoTo EH
+    
+    ' 1. Collect expected component names from files
+    Dim expected As Object
+    Set expected = CreateObject("Scripting.Dictionary")
+    expected.CompareMode = 1 ' TextCompare
+
+    ' Helper to add from folder:
+    CollectNamesFromFolder expected, CombinePath(root, "Modules"), "*.bas"
+    CollectNamesFromFolder expected, CombinePath(root, "Classes"), "*.cls"
+    CollectNamesFromFolder expected, CombinePath(root, "Forms"), "*.frm"
+    CollectNamesFromFolder expected, CombinePath(root, "Documents"), "*.cls"
+    
+    ' 2. Identify extras in WB
+    Dim extras As Object
+    Set extras = CreateObject("Scripting.Dictionary")
+    
+    Dim vbc As VBIDE.VBComponent
+    For Each vbc In wb.VBProject.VBComponents
+        ' We only care about removable types: StdModule, ClassModule, Form
+        ' Documents (Sheets) are usually tied to data, so we don't delete the component just because code is missing,
+        ' unless we want to clear code. Identifying "extra sheets" is risky.
+        ' User request: "extra module/vba object".
+        ' Safest approach: Ignore Documents for deletion proposal.
+        
+        Dim isRemovable As Boolean
+        isRemovable = (vbc.Type = vbext_ct_StdModule Or _
+                       vbc.Type = vbext_ct_ClassModule Or _
+                       vbc.Type = vbext_ct_MSForm)
+                       
+        If isRemovable Then
+            If Not expected.Exists(vbc.Name) Then
+                extras.Add vbc.Name, vbc
+            End If
+        End If
+    Next vbc
+    
+    If extras.Count = 0 Then Exit Sub
+    
+    ' 3. Prompt User
+    Dim msg As String
+    msg = "The following components exist in the workbook but NOT in the source folder:" & vbCrLf & vbCrLf
+    
+    Dim k As Variant
+    Dim count As Long: count = 0
+    For Each k In extras.Keys
+        msg = msg & " - " & k & vbCrLf
+        count = count + 1
+        If count > 15 Then
+            msg = msg & "... and " & (extras.Count - 15) & " more."
+            Exit For
+        End If
+    Next k
+    
+    msg = msg & vbCrLf & "Do you want to DELETE these extra components from the workbook?"
+    
+    If MsgBox(msg, vbQuestion + vbYesNo, "Remove Extra Components?") = vbYes Then
+        Dim deletedList As String
+        For Each k In extras.Keys
+            Dim cToRemove As VBIDE.VBComponent
+            Set cToRemove = extras(k)
+            wb.VBProject.VBComponents.Remove cToRemove
+            LogI "Deleted extra component: " & k
+            deletedList = deletedList & vbCrLf & " - " & k
+        Next k
+        MsgBox "Extra components deleted:" & deletedList, vbInformation
+    End If
+    
+    Exit Sub
+EH:
+    LogE "Error checking extras: " & Err.Description
+End Sub
+
+Private Sub CollectNamesFromFolder(ByVal dict As Object, ByVal folder As String, ByVal pattern As String)
+    Dim f As String
+    If Dir(folder, vbDirectory) = vbNullString Then Exit Sub
+    f = Dir(CombinePath(folder, pattern), vbNormal)
+    Do While Len(f) > 0
+        Dim name As String
+        name = CleanNameWithoutExt(f)
+        If Not dict.Exists(name) Then dict.Add name, True
+        f = Dir
+    Loop
 End Sub
 
 
