@@ -371,9 +371,6 @@ Private Function ComponentFilePath(ByVal root As String, ByVal vbComp As VBIDE.V
         ComponentFilePath = CombinePath(root, vbComp.Name & ".txt")
     End Select
 End Function
-
-
-
 ' ====== NORMALIZATION (Document code) ======
 ' Strips VERSION/Attribute lines that cannot be injected into document modules
 Private Function NormalizeDocumentCode(ByVal rawCode As String) As String
@@ -383,28 +380,38 @@ Private Function NormalizeDocumentCode(ByVal rawCode As String) As String
     Dim i As Long
     Dim s As String
     Dim t As String
+    Dim inHeaderBlock As Boolean
+    
     lines = Split(rawCode, vbCrLf)
     For i = LBound(lines) To UBound(lines)
         s = Replace$(lines(i), vbCr, vbNullString)
-        If Len(s) = 0 Then
-            outBuf = outBuf & vbCrLf
-        Else
-            t = LCase$(Trim$(s))
-            ' Skip unwanted lines
-            If Left$(s, 7) <> "VERSION" _
-               And Left$(t, 9) <> "attribute" _
-               And Left$(t, 12) <> "end attribute" Then
-               
+        t = LCase$(Trim$(s))
+        
+        If t = "begin" Then
+            inHeaderBlock = True
+        ElseIf t = "end" Then
+            If inHeaderBlock Then
+                inHeaderBlock = False
+                ' Skip the header's "END"
+            Else
+                ' This is likely a legitimate "End" statement
                 outBuf = outBuf & s & vbCrLf
             End If
+        ElseIf inHeaderBlock Then
+            ' Skip properties inside BEGIN...END
+        ElseIf Left$(s, 8) = "VERSION " Then
+            ' Skip VERSION line
+        ElseIf Left$(t, 10) = "attribute " Then
+            ' Skip Attribute lines
+        Else
+            ' Keep everything else (code, comments, options)
+            outBuf = outBuf & s & vbCrLf
         End If
     Next i
-
+    
     NormalizeDocumentCode = outBuf
 End Function
-
 ' ===================== PUBLIC MACROS =====================
-
 ' --------- EXPORT all components from ActiveWorkbook ---------
 '@EntryPoint
 '@Ignore ParameterNotUsed
