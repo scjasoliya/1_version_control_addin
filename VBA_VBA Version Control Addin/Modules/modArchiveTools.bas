@@ -272,7 +272,7 @@ End Sub
 '===========================
 
 ' Resolve a reliable TEMP folder with trailing backslash.
-Private Function GetTempFolder() As String
+Public Function GetTempFolder() As String
     Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
     Dim p As String
 
@@ -381,7 +381,7 @@ Private Function ContainsNonAscii(ByVal p As String) As Boolean
 End Function
 
 ' Robust copy using FileCopy then fallback to FSO.CopyFile
-Private Function CopyFileRobust(ByVal src As String, ByVal dest As String, ByVal overwrite As Boolean) As Boolean
+Public Function CopyFileRobust(ByVal src As String, ByVal dest As String, ByVal overwrite As Boolean) As Boolean
     Dim ok As Boolean
     Dim err1 As Long
     Dim desc1 As String
@@ -414,13 +414,13 @@ Private Function CopyFileRobust(ByVal src As String, ByVal dest As String, ByVal
 End Function
 
 ' Get the file name without extension from a full file path.
-Private Function GetBaseName(ByVal filePath As String) As String
+Public Function GetBaseName(ByVal filePath As String) As String
     Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
     GetBaseName = fso.GetBaseName(filePath)
 End Function
 
 ' Get the folder path (with trailing backslash) from a full file path or folder path.
-Private Function GetFolderFromPath(ByVal fileOrFolderPath As String) As String
+Public Function GetFolderFromPath(ByVal fileOrFolderPath As String) As String
     Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
     Dim folderPath As String
     On Error Resume Next
@@ -442,17 +442,18 @@ Private Function GetFolderName(ByVal folderPath As String) As String
 End Function
 
 ' Recursively delete a folder and all its contents.
-Private Sub DeleteFolderRecursive(ByVal folderPath As String)
+' Errors are fully suppressed — never propagates to caller.
+Public Sub DeleteFolderRecursive(ByVal folderPath As String)
+    On Error Resume Next
     Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
     If fso.FolderExists(folderPath) Then
-        On Error Resume Next
         fso.DeleteFolder folderPath, True
-        On Error GoTo 0
     End If
+    On Error GoTo 0
 End Sub
 
 ' Ensure a folder exists; create it if needed (single level).
-Private Function EnsureFolderExists(ByVal folderPath As String) As Boolean
+Public Function EnsureFolderExists(ByVal folderPath As String) As Boolean
     On Error GoTo Fail
     If Len(folderPath) = 0 Then
         EnsureFolderExists = False
@@ -474,14 +475,14 @@ Fail:
 End Function
 
 ' Check if a file exists.
-Private Function FileExists(ByVal path As String) As Boolean
+Public Function FileExists(ByVal path As String) As Boolean
     On Error Resume Next
     FileExists = (Len(Dir$(path)) > 0)
     On Error GoTo 0
 End Function
 
 ' Check if a folder exists.
-Private Function FolderExists(ByVal path As String) As Boolean
+Public Function FolderExists(ByVal path As String) As Boolean
     On Error Resume Next
     FolderExists = (Len(Dir$(path, vbDirectory)) > 0)
     On Error GoTo 0
@@ -569,7 +570,7 @@ End Function
 '===========================
 ' PowerShell fallback (optional)
 '===========================
-Private Function ExpandArchiveWithPowerShell(ByVal zipPath As String, ByVal destFolder As String) As Boolean
+Public Function ExpandArchiveWithPowerShell(ByVal zipPath As String, ByVal destFolder As String) As Boolean
     On Error GoTo Fail
     Dim wsh As Object: Set wsh = CreateObject("WScript.Shell")
     Dim cmd As String
@@ -593,7 +594,7 @@ Private Function PSQuoteLiteral(ByVal s As String) As String
     PSQuoteLiteral = Replace(s, "'", "''")
 End Function
 
-Private Function CompressFolderWithPowerShell(ByVal srcFolder As String, ByVal outZip As String) As Boolean
+Public Function CompressFolderWithPowerShell(ByVal srcFolder As String, ByVal outZip As String) As Boolean
     On Error GoTo Fail
     Dim wsh As Object: Set wsh = CreateObject("WScript.Shell")
     Dim cmd As String

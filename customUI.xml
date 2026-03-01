@@ -1,0 +1,69 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui">
+    <ribbon>
+        <tabs>
+            <tab id="tabVBAVersionControl" label="VBA Version Control">
+                <!-- Existing group (assumed based on your previous sync tools) -->
+                <group id="grpSync" label="Code Sync">
+                    <button id="btnExport"
+                            label="Export Code"
+                            size="large"
+                            imageMso="ExportTextFile"
+                            onAction="ExportCode"
+                            screentip="Export VBA Code to Files"
+                            supertip="Exports all VBA modules, class files, and forms from the active workbook to a folder next to the file. Use this to save your code into version control." />
+                    <button id="btnImport"
+                            label="Import Code"
+                            size="large"
+                            imageMso="ImportTextFile"
+                            onAction="ImportCode"
+                            screentip="Import VBA Code from Files"
+                            supertip="Imports VBA modules, class files, and forms from a folder back into the active workbook. Use this to restore code from version control." />
+                </group>
+                <!-- Archive tools group -->
+                <group id="grpArchive" label="Archive">
+                    <button id="btnExtract"
+                            label="Extract Excel"
+                            size="large"
+                            imageMso="FileOpen"
+                            onAction="ExtractExcelArchive"
+                            screentip="Extract Excel File Contents"
+                            supertip="Extracts the contents of the active workbook (as a ZIP archive) into a folder next to the file. Supports .xlsm and .xlam files." />
+                    <button id="btnRepack"
+                            label="Repack Excel"
+                            size="large"
+                            imageMso="FileSaveAs"
+                            onAction="RepackExcelArchive"
+                            screentip="Repack Folder into Excel File"
+                            supertip="Repacks an extracted folder back into a timestamped .xlsm/.xlam file. You will be prompted to select the extracted folder." />
+                </group>
+                <!-- Security/Protection tools group -->
+                <group id="grpSecurity" label="Security &amp; Protection">
+                    <!-- RAM bypass (session only, fast) -->
+                    <button id="btnUnlockRAM" 
+                            label="Unlock VBA (RAM ByPass)" 
+                            size="large" 
+                            imageMso="MacroSecurity" 
+                            onAction="UnlockActiveVBAProject" 
+                            screentip="Unlock VBA Project (Session Only)" 
+                            supertip="Temporarily bypasses the VBA project password for the current Excel session. Does not permanently modify the file." />
+                    <!-- Permanent bypass (creates new file) -->
+                    <button id="btnUnlockFile" 
+                            label="Remove VBA Password" 
+                            size="large" 
+                            imageMso="DatabasePermissions" 
+                            onAction="RemoveVBAProjectPassword" 
+                            screentip="Permanently Remove VBA Password" 
+                            supertip="Extracts and patches the workbook to permanently remove the VBA project password. Creates a new unlocked copy of the file." />
+                    <!-- Sheet/Workbook protection bypass -->
+                    <button id="btnUnlockSheets" 
+                            label="Remove Sheet Protection" 
+                            size="large" 
+                            imageMso="SheetProtect" 
+                            onAction="RemoveSheetProtection" 
+                            screentip="Remove Sheet &amp; Workbook Protection" 
+                            supertip="Removes all worksheet and workbook structure protection from the active workbook. Creates a new unprotected copy of the file." />
+                </group>
+            </tab>
+        </tabs>
+    </ribbon>
+</customUI>

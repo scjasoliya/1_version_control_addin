@@ -1,20 +1,17 @@
 Attribute VB_Name = "modVbaSync"
 '@Folder("Export Import")
 ' ===============================================================
-' modVbaSync (combined with helpers)
+' modVbaSync
 '  - Exports/Imports VBA components to/from folder next to workbook:
 '       <WorkbookFolder>\VBA_<WorkbookNameNoExt>\
-'           Modules\Module_<Name>.bas
-'           Classes\Class_<Name>.cls
-'           Forms\Form_<Name>.frm (+ .frx managed by VBE)
-'           Documents\Document_<CodeName>.cls
-'  - Unlocks protected VBProject using password from:
-'       "<WorkbookFullName>.password" (preferred)
-'       or "<WorkbookFullName>.passward" (supported)
+'           Modules\<Name>.bas
+'           Classes\<Name>.cls
+'           Forms\<Name>.frm (+ .frx managed by VBE)
+'           Documents\<CodeName>.cls
+'  - Unlocks protected VBProject using RAM-level bypass
+'       (modVBAPasswordBypass.BypassVBAProjectPassword)
 '  - Requires: Trust access to VBOM + reference to
 '       Microsoft Visual Basic for Applications Extensibility 5.3
-'
-'  NOTE: This code cannot export code if there is password and password is provided in defined the file.
 ' ===============================================================
 Option Explicit
 
@@ -88,6 +85,8 @@ Private Sub DeleteIfExists(ByVal filePath As String)
     On Error GoTo 0
 End Sub
 
+' Reads the entire content of a file as a string.
+' Used by ImportDocumentCode to load document module source files.
 Private Function ReadAllText(ByVal filePath As String) As String
     On Error GoTo EH
     Dim f As Integer: f = FreeFile
@@ -191,145 +190,41 @@ NotTrusted_VBProject:
     End If
 End Function
 
-' ====== PASSWORD FILE LOGIC ======
-' Preferred: "{WorkbookFullName}.password"
-' Also supported: "{WorkbookFullName}.passward"
-Private Function GetPasswordFilePath(ByVal wb As Workbook) As String
-    Dim p1 As String
-    Dim p2 As String
+' ====== UNLOCK VIA RAM BYPASS ======
 
-    p1 = wb.FullName & ".password"
-    p2 = wb.FullName & ".passward"
-    If Dir(p1, vbNormal) <> vbNullString Then
-        GetPasswordFilePath = p1
-    ElseIf Dir(p2, vbNormal) <> vbNullString Then
-        GetPasswordFilePath = p2
-    Else
-        GetPasswordFilePath = vbNullString
-    End If
-End Function
-
-Private Function GetPasswordFromFile(ByVal wb As Workbook) As String
-    On Error GoTo EH
-    Dim pf As String: pf = GetPasswordFilePath(wb)
-    If Len(pf) = 0 Then Exit Function
-    
-    Dim raw As String: raw = ReadAllText(pf)
-    If Len(raw) = 0 Then Exit Function
-    
-    Dim lines() As String
-    lines = Split(raw, vbCrLf)
-    Dim i As Long
-    For i = LBound(lines) To UBound(lines)
-        Dim s As String: s = Trim$(Replace(lines(i), vbCr, vbNullString))
-        If Len(s) > 0 Then
-            GetPasswordFromFile = s              ' first non-empty line
-            Exit Function
-        End If
-    Next i
-    Exit Function
-EH:
-    GetPasswordFromFile = vbNullString
-End Function
-
-' ====== UNLOCK (best-effort UI automation + manual fallback) ======
-
-Private Function TryUnlockWithSendKeys(ByVal wb As Workbook, ByVal pwd As String) As Boolean
-    On Error GoTo EH
-    LogI "Attempting UI unlock (SendKeys) for: " & wb.Name
-    
-    '@Ignore MemberNotOnInterface
-    Application.Activate: DoEvents
-    
-    ' Show VBE and try to set active project
-    Application.VBE.MainWindow.Visible = True
-    DoEvents
-    
-    ' Open VBE
-    Application.SendKeys "%{F11}", True: DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    
-    ' Try to set active project (may error if locked; ignore)
-    On Error Resume Next
-    Set Application.VBE.ActiveVBProject = wb.VBProject
-    On Error GoTo 0
-    
-    ' Show Project Explorer
-    Application.SendKeys "^{R}", True: DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    
-    ' Type first chars of project name (helps select)
-    Dim projName As String: projName = wb.VBProject.Name
-    If Len(projName) > 0 Then
-        Application.SendKeys Left$(projName, 3), True
-        DoEvents
-        Application.Wait Now + TimeSerial(0, 0, 1)
-    End If
-    
-    ' Expand to trigger prompt, then enter password
-    Application.SendKeys "{RIGHT}", True: DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    Application.SendKeys pwd, True
-    Application.SendKeys "~", True
-    DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    
-    ' Close VBE (optional)
-    Application.SendKeys "%{F11}", True
-    DoEvents
-    
-    TryUnlockWithSendKeys = True
-    Exit Function
-EH:
-    TryUnlockWithSendKeys = False
-End Function
-
-Private Function UnlockVBProjectWithPassword(ByVal wb As Workbook, _
-                                             Optional ByVal mayUseSendKeys As Boolean = True) As Boolean
+' UnlockVBProject
+' Unlocks a password-protected VBProject using the RAM-level
+' DialogBoxParamA hook from modVBAPasswordBypass.
+' Returns True if the project is accessible after the attempt.
+Private Function UnlockVBProject(ByVal wb As Workbook) As Boolean
     On Error GoTo SafeExit
     
     If wb Is Nothing Then Exit Function
+    
+    ' If the project is not protected, nothing to do
     If wb.VBProject.Protection = 0 Then
-        UnlockVBProjectWithPassword = True
+        UnlockVBProject = True
         Exit Function
     End If
     
-    Dim pwd As String: pwd = GetPasswordFromFile(wb)
-    If Len(pwd) = 0 Then
-        LogW "Password file not found or empty. Expected: " & wb.FullName & ".password (or .passward)"
-        MsgBox "VBA project is locked and no password file was found." & vbCrLf & _
-               "Create a text file with the password:" & vbCrLf & _
-               wb.FullName & ".password", vbExclamation
+    ' Attempt RAM-level bypass via modVBAPasswordBypass
+    LogI "Attempting RAM bypass for: " & wb.Name
+    If modVBAPasswordBypass.BypassVBAProjectPassword(wb.VBProject) Then
+        LogI "VBA project unlocked via RAM bypass: " & wb.Name
+        UnlockVBProject = True
         Exit Function
     End If
     
-    If mayUseSendKeys Then
-        If TryUnlockWithSendKeys(wb, pwd) Then
-            DoEvents
-            If wb.VBProject.Protection = 0 Then
-                LogI "VBA project unlocked via UI automation: " & wb.Name
-                UnlockVBProjectWithPassword = True
-                Exit Function
-            End If
-        End If
-    End If
-    
-    ' Manual fallback (show found password)
-    LogW "SendKeys unlock failed or disabled; prompting manual unlock."
-    MsgBox "Please unlock the VBA project manually using this password:" & vbCrLf & vbCrLf & _
-           "Workbook: " & wb.FullName & vbCrLf & _
-           "Password: " & pwd & vbCrLf & vbCrLf & _
-           "Steps: Alt+F11 ? select the project ? enter password.", vbInformation
-    
-    Dim t0 As Single: t0 = Timer
-    Do While wb.VBProject.Protection <> 0
-        DoEvents
-        If Timer - t0 > 30 Then Exit Do          ' timeout
-    Loop
+    ' Bypass failed — inform the user
+    LogW "RAM bypass failed for: " & wb.Name
+    MsgBox "VBA project is locked and the RAM bypass could not unlock it." & vbCrLf & vbCrLf & _
+           "Workbook: " & wb.FullName & vbCrLf & vbCrLf & _
+           "You may need to manually unlock the project via:" & vbCrLf & _
+           "Alt+F11 ? select the project ? enter password.", vbExclamation, "Unlock Failed"
     
 SafeExit:
-    UnlockVBProjectWithPassword = (wb.VBProject.Protection = 0)
-    If Not UnlockVBProjectWithPassword Then
+    UnlockVBProject = (wb.VBProject.Protection = 0)
+    If Not UnlockVBProject Then
         LogW "Project remains locked: " & wb.Name
     End If
 End Function
@@ -427,7 +322,7 @@ Public Sub ExportCode(control As IRibbonControl)
     If Len(ActiveWorkbook.FullName) = 0 Then
         MsgBox "Please save the workbook first.", vbExclamation: Exit Sub
     End If
-    If Not UnlockVBProjectWithPassword(ActiveWorkbook, True) Then Exit Sub
+    If Not UnlockVBProject(ActiveWorkbook) Then Exit Sub
     
     Dim root As String: root = GetProjectRootFolder(ActiveWorkbook)
     If Len(root) = 0 Then
@@ -485,7 +380,7 @@ Public Sub ImportCode(control As IRibbonControl)
     If Len(ActiveWorkbook.FullName) = 0 Then
         MsgBox "Please save the workbook first.", vbExclamation: Exit Sub
     End If
-    If Not UnlockVBProjectWithPassword(ActiveWorkbook, True) Then Exit Sub
+    If Not UnlockVBProject(ActiveWorkbook) Then Exit Sub
     
     Dim root As String: root = GetProjectRootFolder(ActiveWorkbook)
     If Dir(root, vbDirectory) = vbNullString Then
