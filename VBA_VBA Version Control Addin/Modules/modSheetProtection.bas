@@ -50,7 +50,7 @@ Public Sub RemoveSheetProtection(ByVal control As IRibbonControl)
         MsgBox "No active workbook.", vbExclamation, "No Workbook"
         Exit Sub
     End If
-    If Len(ActiveWorkbook.Path) = 0 Then
+    If Len(ActiveWorkbook.path) = 0 Then
         MsgBox "Please save the workbook to disk first.", vbExclamation, "Workbook Not Saved"
         Exit Sub
     End If
@@ -92,11 +92,11 @@ Private Function RemoveAllProtectionFromFile(ByVal wb As Workbook) As String
     Dim wbFound     As Long
     Dim copyOk      As Boolean
 
-    filePath  = wb.FullName
-    baseName  = modArchiveTools.GetBaseName(filePath)
+    filePath = wb.FullName
+    baseName = modArchiveTools.GetBaseName(filePath)
     parentDir = modArchiveTools.GetFolderFromPath(filePath)
     tempFolder = modArchiveTools.GetTempFolder() & baseName & "_unprotect"
-    tempZip    = modArchiveTools.GetTempFolder() & baseName & "_unprotect.zip"
+    tempZip = modArchiveTools.GetTempFolder() & baseName & "_unprotect.zip"
 
     ext = LCase$(Mid$(filePath, InStrRev(filePath, ".") + 1))
     If Len(ext) = 0 Then ext = "xlsx"
@@ -337,3 +337,5 @@ EH:
     On Error Resume Next
     If f <> 0 Then Close #f
 End Sub
+
+

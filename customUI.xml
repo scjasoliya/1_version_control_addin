@@ -38,22 +38,13 @@
                 </group>
                 <!-- Security/Protection tools group -->
                 <group id="grpSecurity" label="Security &amp; Protection">
-                    <!-- RAM bypass (session only, fast) -->
                     <button id="btnUnlockRAM" 
-                            label="Unlock VBA (RAM ByPass)" 
+                            label="Unlock VBA Project" 
                             size="large" 
                             imageMso="MacroSecurity" 
                             onAction="UnlockActiveVBAProject" 
                             screentip="Unlock VBA Project (Session Only)" 
-                            supertip="Temporarily bypasses the VBA project password for the current Excel session. Does not permanently modify the file." />
-                    <!-- Permanent bypass (creates new file) -->
-                    <button id="btnUnlockFile" 
-                            label="Remove VBA Password" 
-                            size="large" 
-                            imageMso="DatabasePermissions" 
-                            onAction="RemoveVBAProjectPassword" 
-                            screentip="Permanently Remove VBA Password" 
-                            supertip="Extracts and patches the workbook to permanently remove the VBA project password. Creates a new unlocked copy of the file." />
+                            supertip="Bypasses the VBA project password for the current Excel session. To permanently remove the password, manually untick 'Lock project for viewing' in the VBA Properties and save the workbook." />
                     <!-- Sheet/Workbook protection bypass -->
                     <button id="btnUnlockSheets" 
                             label="Remove Sheet Protection" 

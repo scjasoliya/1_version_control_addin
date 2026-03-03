@@ -508,8 +508,8 @@ End Function
 
 ' Busy-wait pause using Timer/DoEvents (keeps UI responsive).
 Private Sub PauseMs(ByVal ms As Long)
-    Dim t As Single: t = Timer
-    Do While (Timer - t) * 1000# < ms
+    Dim T As Single: T = Timer
+    Do While (Timer - T) * 1000# < ms
         DoEvents
     Loop
 End Sub
