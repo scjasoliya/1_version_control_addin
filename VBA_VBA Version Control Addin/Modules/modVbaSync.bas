@@ -244,9 +244,13 @@ Private Function NormalizeDocumentCode(ByVal rawCode As String) As String
     Dim T As String
     Dim inHeaderBlock As Boolean
     
-    lines = Split(rawCode, vbCrLf)
+    Dim safeCode As String
+    safeCode = Replace(rawCode, vbCrLf, vbLf)
+    safeCode = Replace(safeCode, vbCr, vbLf)
+    lines = Split(safeCode, vbLf)
+    
     For i = LBound(lines) To UBound(lines)
-        s = Replace$(lines(i), vbCr, vbNullString)
+        s = lines(i)
         T = LCase$(Trim$(s))
         
         If T = "begin" Then
@@ -463,6 +467,25 @@ Private Sub ImportStdOrClass(ByVal wb As Workbook, ByVal filePath As String, _
     
     Dim newComp As VBIDE.VBComponent
     Set newComp = vbProj.VBComponents.Import(filePath)
+    
+    ' Fix cross-import: if the file was missing its header (e.g. VERSION 1.0 CLASS),
+    ' VBA imports it as a Standard Module instead of a Class Module.
+    If newComp.Type <> compType Then
+        LogW "Cross-import detected: " & compName & " imported as type " & newComp.Type & " but expected " & compType & ". Forcing correct type."
+        vbProj.VBComponents.Remove newComp
+        
+        Set newComp = vbProj.VBComponents.Add(compType)
+        On Error Resume Next
+        newComp.name = compName
+        On Error GoTo EH
+        
+        Dim code As String: code = ReadAllText(filePath)
+        code = NormalizeDocumentCode(code) ' Strip out attribute headers if any
+        
+        Dim cm As VBIDE.CodeModule: Set cm = newComp.CodeModule
+        If cm.CountOfLines > 0 Then cm.DeleteLines 1, cm.CountOfLines
+        If Len(code) > 0 Then cm.AddFromString code
+    End If
     
     If newComp.name <> compName Then
         LogI "Renaming imported component " & newComp.name & " to " & compName
