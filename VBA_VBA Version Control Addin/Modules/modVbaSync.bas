@@ -1,20 +1,17 @@
 Attribute VB_Name = "modVbaSync"
 '@Folder("Export Import")
 ' ===============================================================
-' modVbaSync (combined with helpers)
+' modVbaSync
 '  - Exports/Imports VBA components to/from folder next to workbook:
 '       <WorkbookFolder>\VBA_<WorkbookNameNoExt>\
-'           Modules\Module_<Name>.bas
-'           Classes\Class_<Name>.cls
-'           Forms\Form_<Name>.frm (+ .frx managed by VBE)
-'           Documents\Document_<CodeName>.cls
-'  - Unlocks protected VBProject using password from:
-'       "<WorkbookFullName>.password" (preferred)
-'       or "<WorkbookFullName>.passward" (supported)
+'           Modules\<Name>.bas
+'           Classes\<Name>.cls
+'           Forms\<Name>.frm (+ .frx managed by VBE)
+'           Documents\<CodeName>.cls
+'  - Unlocks protected VBProject using RAM-level bypass
+'       (modVBAPasswordBypass.BypassVBAProjectPassword)
 '  - Requires: Trust access to VBOM + reference to
 '       Microsoft Visual Basic for Applications Extensibility 5.3
-'
-'  NOTE: This code cannot export code if there is password and password is provided in defined the file.
 ' ===============================================================
 Option Explicit
 
@@ -30,16 +27,16 @@ Public Enum ComponentKind
 End Enum
 
 ' ====== LOGGING ======
-Private Sub LogI(ByVal msg As String)
-    If ENABLE_DEBUG_LOGS Then Debug.Print Format$(Now, "yyyy-mm-dd hh:nn:ss"); " [INFO] "; msg
+Private Sub LogI(ByVal Msg As String)
+    If ENABLE_DEBUG_LOGS Then Debug.Print Format$(Now, "yyyy-mm-dd hh:nn:ss"); " [INFO] "; Msg
 End Sub
 
-Private Sub LogW(ByVal msg As String)
-    If ENABLE_DEBUG_LOGS Then Debug.Print Format$(Now, "yyyy-mm-dd hh:nn:ss"); " [WARN] "; msg
+Private Sub LogW(ByVal Msg As String)
+    If ENABLE_DEBUG_LOGS Then Debug.Print Format$(Now, "yyyy-mm-dd hh:nn:ss"); " [WARN] "; Msg
 End Sub
 
-Private Sub LogE(ByVal msg As String)
-    If ENABLE_DEBUG_LOGS Then Debug.Print Format$(Now, "yyyy-mm-dd hh:nn:ss"); " [ERROR] "; msg
+Private Sub LogE(ByVal Msg As String)
+    If ENABLE_DEBUG_LOGS Then Debug.Print Format$(Now, "yyyy-mm-dd hh:nn:ss"); " [ERROR] "; Msg
 End Sub
 
 ' ====== BASIC FILE HELPERS ======
@@ -88,6 +85,8 @@ Private Sub DeleteIfExists(ByVal filePath As String)
     On Error GoTo 0
 End Sub
 
+' Reads the entire content of a file as a string.
+' Used by ImportDocumentCode to load document module source files.
 Private Function ReadAllText(ByVal filePath As String) As String
     On Error GoTo EH
     Dim f As Integer: f = FreeFile
@@ -135,7 +134,7 @@ Public Function IsVBATrustEnabled(Optional ByVal ShowMessage As Boolean = False,
     ' Primary check: accessing the VBE project collection throws when trust is disabled.
     '@Ignore VariableNotUsed
     Dim n As Long
-    n = Application.VBE.VBProjects.Count
+    n = Application.vbe.VBProjects.count
     IsVBATrustEnabled = True
     Diagnostic = "VBE accessible via Application.VBE.VBProjects.Count."
     Exit Function
@@ -191,148 +190,10 @@ NotTrusted_VBProject:
     End If
 End Function
 
-' ====== PASSWORD FILE LOGIC ======
-' Preferred: "{WorkbookFullName}.password"
-' Also supported: "{WorkbookFullName}.passward"
-Private Function GetPasswordFilePath(ByVal wb As Workbook) As String
-    Dim p1 As String
-    Dim p2 As String
+' ====== UNLOCK CHECK ======
 
-    p1 = wb.FullName & ".password"
-    p2 = wb.FullName & ".passward"
-    If Dir(p1, vbNormal) <> vbNullString Then
-        GetPasswordFilePath = p1
-    ElseIf Dir(p2, vbNormal) <> vbNullString Then
-        GetPasswordFilePath = p2
-    Else
-        GetPasswordFilePath = vbNullString
-    End If
-End Function
-
-Private Function GetPasswordFromFile(ByVal wb As Workbook) As String
-    On Error GoTo EH
-    Dim pf As String: pf = GetPasswordFilePath(wb)
-    If Len(pf) = 0 Then Exit Function
-    
-    Dim raw As String: raw = ReadAllText(pf)
-    If Len(raw) = 0 Then Exit Function
-    
-    Dim lines() As String
-    lines = Split(raw, vbCrLf)
-    Dim i As Long
-    For i = LBound(lines) To UBound(lines)
-        Dim s As String: s = Trim$(Replace(lines(i), vbCr, vbNullString))
-        If Len(s) > 0 Then
-            GetPasswordFromFile = s              ' first non-empty line
-            Exit Function
-        End If
-    Next i
-    Exit Function
-EH:
-    GetPasswordFromFile = vbNullString
-End Function
-
-' ====== UNLOCK (best-effort UI automation + manual fallback) ======
-
-Private Function TryUnlockWithSendKeys(ByVal wb As Workbook, ByVal pwd As String) As Boolean
-    On Error GoTo EH
-    LogI "Attempting UI unlock (SendKeys) for: " & wb.Name
-    
-    '@Ignore MemberNotOnInterface
-    Application.Activate: DoEvents
-    
-    ' Show VBE and try to set active project
-    Application.VBE.MainWindow.Visible = True
-    DoEvents
-    
-    ' Open VBE
-    Application.SendKeys "%{F11}", True: DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    
-    ' Try to set active project (may error if locked; ignore)
-    On Error Resume Next
-    Set Application.VBE.ActiveVBProject = wb.VBProject
-    On Error GoTo 0
-    
-    ' Show Project Explorer
-    Application.SendKeys "^{R}", True: DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    
-    ' Type first chars of project name (helps select)
-    Dim projName As String: projName = wb.VBProject.Name
-    If Len(projName) > 0 Then
-        Application.SendKeys Left$(projName, 3), True
-        DoEvents
-        Application.Wait Now + TimeSerial(0, 0, 1)
-    End If
-    
-    ' Expand to trigger prompt, then enter password
-    Application.SendKeys "{RIGHT}", True: DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    Application.SendKeys pwd, True
-    Application.SendKeys "~", True
-    DoEvents
-    Application.Wait Now + TimeSerial(0, 0, 1)
-    
-    ' Close VBE (optional)
-    Application.SendKeys "%{F11}", True
-    DoEvents
-    
-    TryUnlockWithSendKeys = True
-    Exit Function
-EH:
-    TryUnlockWithSendKeys = False
-End Function
-
-Private Function UnlockVBProjectWithPassword(ByVal wb As Workbook, _
-                                             Optional ByVal mayUseSendKeys As Boolean = True) As Boolean
-    On Error GoTo SafeExit
-    
-    If wb Is Nothing Then Exit Function
-    If wb.VBProject.Protection = 0 Then
-        UnlockVBProjectWithPassword = True
-        Exit Function
-    End If
-    
-    Dim pwd As String: pwd = GetPasswordFromFile(wb)
-    If Len(pwd) = 0 Then
-        LogW "Password file not found or empty. Expected: " & wb.FullName & ".password (or .passward)"
-        MsgBox "VBA project is locked and no password file was found." & vbCrLf & _
-               "Create a text file with the password:" & vbCrLf & _
-               wb.FullName & ".password", vbExclamation
-        Exit Function
-    End If
-    
-    If mayUseSendKeys Then
-        If TryUnlockWithSendKeys(wb, pwd) Then
-            DoEvents
-            If wb.VBProject.Protection = 0 Then
-                LogI "VBA project unlocked via UI automation: " & wb.Name
-                UnlockVBProjectWithPassword = True
-                Exit Function
-            End If
-        End If
-    End If
-    
-    ' Manual fallback (show found password)
-    LogW "SendKeys unlock failed or disabled; prompting manual unlock."
-    MsgBox "Please unlock the VBA project manually using this password:" & vbCrLf & vbCrLf & _
-           "Workbook: " & wb.FullName & vbCrLf & _
-           "Password: " & pwd & vbCrLf & vbCrLf & _
-           "Steps: Alt+F11 ? select the project ? enter password.", vbInformation
-    
-    Dim t0 As Single: t0 = Timer
-    Do While wb.VBProject.Protection <> 0
-        DoEvents
-        If Timer - t0 > 30 Then Exit Do          ' timeout
-    Loop
-    
-SafeExit:
-    UnlockVBProjectWithPassword = (wb.VBProject.Protection = 0)
-    If Not UnlockVBProjectWithPassword Then
-        LogW "Project remains locked: " & wb.Name
-    End If
-End Function
+' UnlockVBProject is no longer needed since UnlockActiveVBAProject
+' handles the asynchronous bypass and callback execution.
 
 ' ====== FOLDER RESOLUTION NEXT TO WORKBOOK ======
 Private Function GetProjectRootFolder(ByVal wb As Workbook) As String
@@ -345,7 +206,7 @@ Private Function GetProjectRootFolder(ByVal wb As Workbook) As String
         Exit Function
     End If
     Dim wbDir As String: wbDir = GetParentFolder(wbPath)
-    Dim projFolder As String: projFolder = "VBA_" & CleanNameWithoutExt(wb.Name)
+    Dim projFolder As String: projFolder = "VBA_" & CleanNameWithoutExt(wb.name)
     GetProjectRootFolder = CombinePath(wbDir, projFolder)
 End Function
 
@@ -360,17 +221,18 @@ End Sub
 Private Function ComponentFilePath(ByVal root As String, ByVal vbComp As VBIDE.VBComponent) As String
     Select Case vbComp.Type
     Case vbext_ct_StdModule
-        ComponentFilePath = CombinePath(CombinePath(root, "Modules"), vbNullString & vbComp.Name & ".bas")
+        ComponentFilePath = CombinePath(CombinePath(root, "Modules"), vbNullString & vbComp.name & ".bas")
     Case vbext_ct_ClassModule
-        ComponentFilePath = CombinePath(CombinePath(root, "Classes"), vbNullString & vbComp.Name & ".cls")
+        ComponentFilePath = CombinePath(CombinePath(root, "Classes"), vbNullString & vbComp.name & ".cls")
     Case vbext_ct_MSForm
-        ComponentFilePath = CombinePath(CombinePath(root, "Forms"), vbNullString & vbComp.Name & ".frm")
+        ComponentFilePath = CombinePath(CombinePath(root, "Forms"), vbNullString & vbComp.name & ".frm")
     Case vbext_ct_Document
-        ComponentFilePath = CombinePath(CombinePath(root, "Documents"), vbNullString & vbComp.Name & ".cls")
+        ComponentFilePath = CombinePath(CombinePath(root, "Documents"), vbNullString & vbComp.name & ".cls")
     Case Else
-        ComponentFilePath = CombinePath(root, vbComp.Name & ".txt")
+        ComponentFilePath = CombinePath(root, vbComp.name & ".txt")
     End Select
 End Function
+
 ' ====== NORMALIZATION (Document code) ======
 ' Strips VERSION/Attribute lines that cannot be injected into document modules
 Private Function NormalizeDocumentCode(ByVal rawCode As String) As String
@@ -379,17 +241,21 @@ Private Function NormalizeDocumentCode(ByVal rawCode As String) As String
     Dim outBuf As String
     Dim i As Long
     Dim s As String
-    Dim t As String
+    Dim T As String
     Dim inHeaderBlock As Boolean
     
-    lines = Split(rawCode, vbCrLf)
+    Dim safeCode As String
+    safeCode = Replace(rawCode, vbCrLf, vbLf)
+    safeCode = Replace(safeCode, vbCr, vbLf)
+    lines = Split(safeCode, vbLf)
+    
     For i = LBound(lines) To UBound(lines)
-        s = Replace$(lines(i), vbCr, vbNullString)
-        t = LCase$(Trim$(s))
+        s = lines(i)
+        T = LCase$(Trim$(s))
         
-        If t = "begin" Then
+        If T = "begin" Then
             inHeaderBlock = True
-        ElseIf t = "end" Then
+        ElseIf T = "end" Then
             If inHeaderBlock Then
                 inHeaderBlock = False
                 ' Skip the header's "END"
@@ -401,7 +267,7 @@ Private Function NormalizeDocumentCode(ByVal rawCode As String) As String
             ' Skip properties inside BEGIN...END
         ElseIf Left$(s, 8) = "VERSION " Then
             ' Skip VERSION line
-        ElseIf Left$(t, 10) = "attribute " Then
+        ElseIf Left$(T, 10) = "attribute " Then
             ' Skip Attribute lines
         Else
             ' Keep everything else (code, comments, options)
@@ -411,23 +277,39 @@ Private Function NormalizeDocumentCode(ByVal rawCode As String) As String
     
     NormalizeDocumentCode = outBuf
 End Function
+
 ' ===================== PUBLIC MACROS =====================
 ' --------- EXPORT all components from ActiveWorkbook ---------
 '@EntryPoint
 '@Ignore ParameterNotUsed
-Public Sub ExportCode(control As IRibbonControl)
+Public Sub ExportCode(Optional ByVal control As IRibbonControl)
     On Error GoTo EH
     If ActiveWorkbook Is Nothing Then
         MsgBox "No active workbook.", vbExclamation: Exit Sub
     End If
-    If Not IsVBATrustEnabled() Then
-        MsgBox "Enable 'Trust access to the VBA project object model' and retry.", vbCritical
+    If Not IsVBATrustEnabled(True) Then
         Exit Sub
     End If
     If Len(ActiveWorkbook.FullName) = 0 Then
         MsgBox "Please save the workbook first.", vbExclamation: Exit Sub
     End If
-    If Not UnlockVBProjectWithPassword(ActiveWorkbook, True) Then Exit Sub
+    
+    ' If locked, trigger async bypass with a callback to resume here
+    If ActiveWorkbook.VBProject.Protection <> 0 Then
+        modVBAPasswordBypass.UnlockActiveVBAProject Nothing, "modVbaSync.ExportCodeAfterUnlock_"
+        Exit Sub
+    End If
+    
+    ExportCodeAfterUnlock_
+    Exit Sub
+EH:
+    LogE "Export error: " & Err.Number & " - " & Err.Description
+    MsgBox "Export failed: " & Err.Description, vbCritical
+End Sub
+
+Public Sub ExportCodeAfterUnlock_()
+    On Error GoTo EH
+    If ActiveWorkbook Is Nothing Then Exit Sub
     
     Dim root As String: root = GetProjectRootFolder(ActiveWorkbook)
     If Len(root) = 0 Then
@@ -447,20 +329,46 @@ Public Sub ExportCode(control As IRibbonControl)
 
     EnsureAllSubfolders root
     
-    LogI "Export ? " & ActiveWorkbook.FullName & " ? " & root
+    LogI "Export -> " & ActiveWorkbook.FullName & " -> " & root
     Dim vbComp As VBIDE.VBComponent
     For Each vbComp In ActiveWorkbook.VBProject.VBComponents
-        Dim fpath As String: fpath = ComponentFilePath(root, vbComp)
-        DeleteIfExists fpath
-        On Error Resume Next
-        vbComp.Export fpath
-        If Err.Number <> 0 Then
-            LogE "Export failed for " & vbComp.Name & ": " & Err.Description
-            Err.Clear
-        Else
-            LogI "Exported: " & fpath
+        Dim skipExport As Boolean: skipExport = False
+        
+        If vbComp.Type = vbext_ct_Document Then
+            Dim cm As VBIDE.CodeModule: Set cm = vbComp.CodeModule
+            If cm.CountOfLines = 0 Then
+                skipExport = True
+            Else
+                Dim visibleCode As String
+                visibleCode = cm.Lines(1, cm.CountOfLines)
+                visibleCode = Replace(visibleCode, "Option Explicit", "", , , vbTextCompare)
+                visibleCode = Replace(visibleCode, vbCr, "")
+                visibleCode = Replace(visibleCode, vbLf, "")
+                visibleCode = Replace(visibleCode, " ", "")
+                visibleCode = Replace(visibleCode, vbTab, "")
+                
+                If Len(visibleCode) = 0 Then
+                    skipExport = True
+                End If
+            End If
         End If
-        On Error GoTo EH
+        
+        If skipExport Then
+            LogI "Skipped exporting empty document: " & vbComp.name
+        Else
+            Dim fpath As String: fpath = ComponentFilePath(root, vbComp)
+            DeleteIfExists fpath
+            On Error Resume Next
+            vbComp.Export fpath
+            If Err.Number <> 0 Then
+                LogE "Export failed for " & vbComp.name & ": " & Err.Description
+                MsgBox "Export failed for " & vbComp.name & ": " & Err.Description, vbCritical
+                Err.Clear
+            Else
+                LogI "Exported: " & fpath
+            End If
+            On Error GoTo EH
+        End If
     Next vbComp
     
     MsgBox "Export complete to: " & root, vbInformation
@@ -473,26 +381,41 @@ End Sub
 ' --------- IMPORT all components into ActiveWorkbook ---------
 '@EntryPoint
 '@Ignore ParameterNotUsed
-Public Sub ImportCode(control As IRibbonControl)
+Public Sub ImportCode(Optional ByVal control As IRibbonControl)
     On Error GoTo EH
     If ActiveWorkbook Is Nothing Then
         MsgBox "No active workbook.", vbExclamation: Exit Sub
     End If
-    If Not IsVBATrustEnabled() Then
-        MsgBox "Enable 'Trust access to the VBA project object model' and retry.", vbCritical
+    If Not IsVBATrustEnabled(True) Then
         Exit Sub
     End If
     If Len(ActiveWorkbook.FullName) = 0 Then
         MsgBox "Please save the workbook first.", vbExclamation: Exit Sub
     End If
-    If Not UnlockVBProjectWithPassword(ActiveWorkbook, True) Then Exit Sub
+    
+    ' If locked, trigger async bypass with a callback to resume here
+    If ActiveWorkbook.VBProject.Protection <> 0 Then
+        modVBAPasswordBypass.UnlockActiveVBAProject Nothing, "modVbaSync.ImportCodeAfterUnlock_"
+        Exit Sub
+    End If
+    
+    ImportCodeAfterUnlock_
+    Exit Sub
+EH:
+    LogE "Import error: " & Err.Number & " - " & Err.Description
+    MsgBox "Import failed: " & Err.Description, vbCritical
+End Sub
+
+Public Sub ImportCodeAfterUnlock_()
+    On Error GoTo EH
+    If ActiveWorkbook Is Nothing Then Exit Sub
     
     Dim root As String: root = GetProjectRootFolder(ActiveWorkbook)
     If Dir(root, vbDirectory) = vbNullString Then
         MsgBox "Source folder not found: " & root, vbCritical: Exit Sub
     End If
     
-    LogI "Import ? " & ActiveWorkbook.FullName & " ? " & root
+    LogI "Import -> " & ActiveWorkbook.FullName & " -> " & root
     
     ' Import Std Modules
     ImportFromFolder ActiveWorkbook, CombinePath(root, "Modules"), "*.bas", ckStdModule
@@ -570,12 +493,31 @@ Private Sub ImportStdOrClass(ByVal wb As Workbook, ByVal filePath As String, _
     Dim newComp As VBIDE.VBComponent
     Set newComp = vbProj.VBComponents.Import(filePath)
     
-    If newComp.Name <> compName Then
-        LogI "Renaming imported component " & newComp.Name & " to " & compName
+    ' Fix cross-import: if the file was missing its header (e.g. VERSION 1.0 CLASS),
+    ' VBA imports it as a Standard Module instead of a Class Module.
+    If newComp.Type <> compType Then
+        LogW "Cross-import detected: " & compName & " imported as type " & newComp.Type & " but expected " & compType & ". Forcing correct type."
+        vbProj.VBComponents.Remove newComp
+        
+        Set newComp = vbProj.VBComponents.Add(compType)
         On Error Resume Next
-        newComp.Name = compName
+        newComp.name = compName
+        On Error GoTo EH
+        
+        Dim code As String: code = ReadAllText(filePath)
+        code = NormalizeDocumentCode(code) ' Strip out attribute headers if any
+        
+        Dim cm As VBIDE.CodeModule: Set cm = newComp.CodeModule
+        If cm.CountOfLines > 0 Then cm.DeleteLines 1, cm.CountOfLines
+        If Len(code) > 0 Then cm.AddFromString code
+    End If
+    
+    If newComp.name <> compName Then
+        LogI "Renaming imported component " & newComp.name & " to " & compName
+        On Error Resume Next
+        newComp.name = compName
         If Err.Number <> 0 Then
-            LogE "Failed to rename component " & newComp.Name & " to " & compName & ": " & Err.Description
+            LogE "Failed to rename component " & newComp.name & " to " & compName & ": " & Err.Description
             Err.Clear
         End If
         On Error GoTo EH
@@ -605,12 +547,12 @@ Private Sub ImportForm(ByVal wb As Workbook, ByVal filePath As String, ByVal for
     Dim newComp As VBIDE.VBComponent
     Set newComp = vbProj.VBComponents.Import(filePath)
     
-    If newComp.Name <> formName Then
-        LogI "Renaming imported form " & newComp.Name & " to " & formName
+    If newComp.name <> formName Then
+        LogI "Renaming imported form " & newComp.name & " to " & formName
         On Error Resume Next
-        newComp.Name = formName
-         If Err.Number <> 0 Then
-            LogE "Failed to rename form " & newComp.Name & " to " & formName & ": " & Err.Description
+        newComp.name = formName
+        If Err.Number <> 0 Then
+            LogE "Failed to rename form " & newComp.name & " to " & formName & ": " & Err.Description
             Err.Clear
         End If
         On Error GoTo EH
@@ -658,7 +600,7 @@ Private Sub CheckAndRemoveExtras(ByVal wb As Workbook, ByVal root As String)
     ' 1. Collect expected component names from files
     Dim expected As Object
     Set expected = CreateObject("Scripting.Dictionary")
-    expected.CompareMode = 1 ' TextCompare
+    expected.CompareMode = 1                     ' TextCompare
 
     ' Helper to add from folder:
     CollectNamesFromFolder expected, CombinePath(root, "Modules"), "*.bas"
@@ -684,32 +626,32 @@ Private Sub CheckAndRemoveExtras(ByVal wb As Workbook, ByVal root As String)
                        vbc.Type = vbext_ct_MSForm)
                        
         If isRemovable Then
-            If Not expected.Exists(vbc.Name) Then
-                extras.Add vbc.Name, vbc
+            If Not expected.Exists(vbc.name) Then
+                extras.Add vbc.name, vbc
             End If
         End If
     Next vbc
     
-    If extras.Count = 0 Then Exit Sub
+    If extras.count = 0 Then Exit Sub
     
     ' 3. Prompt User
-    Dim msg As String
-    msg = "The following components exist in the workbook but NOT in the source folder:" & vbCrLf & vbCrLf
+    Dim Msg As String
+    Msg = "The following components exist in the workbook but NOT in the source folder:" & vbCrLf & vbCrLf
     
     Dim k As Variant
     Dim count As Long: count = 0
     For Each k In extras.Keys
-        msg = msg & " - " & k & vbCrLf
+        Msg = Msg & " - " & k & vbCrLf
         count = count + 1
         If count > 15 Then
-            msg = msg & "... and " & (extras.Count - 15) & " more."
+            Msg = Msg & "... and " & (extras.count - 15) & " more."
             Exit For
         End If
     Next k
     
-    msg = msg & vbCrLf & "Do you want to DELETE these extra components from the workbook?"
+    Msg = Msg & vbCrLf & "Do you want to DELETE these extra components from the workbook?"
     
-    If MsgBox(msg, vbQuestion + vbYesNo, "Remove Extra Components?") = vbYes Then
+    If MsgBox(Msg, vbQuestion + vbYesNo, "Remove Extra Components?") = vbYes Then
         Dim deletedList As String
         For Each k In extras.Keys
             Dim cToRemove As VBIDE.VBComponent
