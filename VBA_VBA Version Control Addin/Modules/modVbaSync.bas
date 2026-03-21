@@ -332,18 +332,43 @@ Public Sub ExportCodeAfterUnlock_()
     LogI "Export -> " & ActiveWorkbook.FullName & " -> " & root
     Dim vbComp As VBIDE.VBComponent
     For Each vbComp In ActiveWorkbook.VBProject.VBComponents
-        Dim fpath As String: fpath = ComponentFilePath(root, vbComp)
-        DeleteIfExists fpath
-        On Error Resume Next
-        vbComp.Export fpath
-        If Err.Number <> 0 Then
-            LogE "Export failed for " & vbComp.name & ": " & Err.Description
-            MsgBox "Export failed for " & vbComp.name & ": " & Err.Description, vbCritical
-            Err.Clear
-        Else
-            LogI "Exported: " & fpath
+        Dim skipExport As Boolean: skipExport = False
+        
+        If vbComp.Type = vbext_ct_Document Then
+            Dim cm As VBIDE.CodeModule: Set cm = vbComp.CodeModule
+            If cm.CountOfLines = 0 Then
+                skipExport = True
+            Else
+                Dim visibleCode As String
+                visibleCode = cm.Lines(1, cm.CountOfLines)
+                visibleCode = Replace(visibleCode, "Option Explicit", "", , , vbTextCompare)
+                visibleCode = Replace(visibleCode, vbCr, "")
+                visibleCode = Replace(visibleCode, vbLf, "")
+                visibleCode = Replace(visibleCode, " ", "")
+                visibleCode = Replace(visibleCode, vbTab, "")
+                
+                If Len(visibleCode) = 0 Then
+                    skipExport = True
+                End If
+            End If
         End If
-        On Error GoTo EH
+        
+        If skipExport Then
+            LogI "Skipped exporting empty document: " & vbComp.name
+        Else
+            Dim fpath As String: fpath = ComponentFilePath(root, vbComp)
+            DeleteIfExists fpath
+            On Error Resume Next
+            vbComp.Export fpath
+            If Err.Number <> 0 Then
+                LogE "Export failed for " & vbComp.name & ": " & Err.Description
+                MsgBox "Export failed for " & vbComp.name & ": " & Err.Description, vbCritical
+                Err.Clear
+            Else
+                LogI "Exported: " & fpath
+            End If
+            On Error GoTo EH
+        End If
     Next vbComp
     
     MsgBox "Export complete to: " & root, vbInformation
