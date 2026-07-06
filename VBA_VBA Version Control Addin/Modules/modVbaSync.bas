@@ -195,11 +195,59 @@ End Function
 ' UnlockVBProject is no longer needed since UnlockActiveVBAProject
 ' handles the asynchronous bypass and callback execution.
 
+' ====== ONEDRIVE PATH RESOLUTION ======
+Private Function GetLocalPath(ByVal wbPath As String) As String
+    If InStr(1, wbPath, "http://", vbTextCompare) <> 1 And InStr(1, wbPath, "https://", vbTextCompare) <> 1 Then
+        GetLocalPath = wbPath
+        Exit Function
+    End If
+    
+    Dim normalizedUrl As String
+    normalizedUrl = Replace(wbPath, "/", "\")
+    
+    Dim odConsumer As String
+    Dim odCommercial As String
+    odConsumer = Environ$("OneDriveConsumer")
+    odCommercial = Environ$("OneDriveCommercial")
+    If odConsumer = vbNullString Then odConsumer = Environ$("OneDrive")
+    If odCommercial = vbNullString Then odCommercial = Environ$("OneDrive")
+    
+    Dim localPath As String
+    localPath = vbNullString
+    
+    If InStr(1, normalizedUrl, "d.docs.live.net", vbTextCompare) > 0 And Len(odConsumer) > 0 Then
+        Dim parts() As String
+        parts = Split(normalizedUrl, "\")
+        If UBound(parts) >= 4 Then
+            Dim relPath As String
+            relPath = vbNullString
+            Dim i As Long
+            For i = 4 To UBound(parts)
+                relPath = relPath & "\" & parts(i)
+            Next i
+            localPath = odConsumer & relPath
+        End If
+    ElseIf InStr(1, normalizedUrl, "sharepoint.com", vbTextCompare) > 0 And Len(odCommercial) > 0 Then
+        Dim docIdx As Long
+        docIdx = InStr(1, normalizedUrl, "\Documents\", vbTextCompare)
+        If docIdx > 0 Then
+            localPath = odCommercial & Mid$(normalizedUrl, docIdx + 10)
+        End If
+    End If
+    
+    If Len(localPath) > 0 Then
+        localPath = Replace(localPath, "%20", " ")
+        GetLocalPath = localPath
+    Else
+        GetLocalPath = wbPath
+    End If
+End Function
+
 ' ====== FOLDER RESOLUTION NEXT TO WORKBOOK ======
 Private Function GetProjectRootFolder(ByVal wb As Workbook) As String
     Dim wbPath As String
     On Error Resume Next
-    wbPath = wb.FullName
+    wbPath = GetLocalPath(wb.FullName)
     On Error GoTo 0
     If Len(wbPath) = 0 Then
         GetProjectRootFolder = vbNullString      ' unsaved workbook
